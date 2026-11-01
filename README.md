@@ -118,7 +118,7 @@ mini-research-agent/
 ## Installation
 
 ```bash
-git clone https://github.com/<your-username>/mini-research-agent.git
+git clone https://github.com/reezanikeghbal-design/mini-research-agent.git
 cd mini-research-agent
 python -m venv .venv
 source .venv/bin/activate        # Windows: .venv\Scripts\activate
