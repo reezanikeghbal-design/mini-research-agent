@@ -1,0 +1,24 @@
+[project]
+name = "mini-research-agent"
+version = "0.1.0"
+description = "A small AI research agent: decides whether to search, calls a tool, answers, evaluates, remembers."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+dependencies = [
+    "google-genai>=1.0.0",
+    "tavily-python>=0.5.0",
+    "pydantic>=2.5",
+    "python-dotenv>=1.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+# The project is run from the repository root (`python app.py`); it is not
+# packaged for installation, so there is no [build-system] section on purpose.
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-q"

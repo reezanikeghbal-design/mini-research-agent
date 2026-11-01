@@ -1,0 +1,23 @@
+# Secrets
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+*.egg-info/
+
+# Runtime data (keep the folders, not the contents)
+data/*
+!data/.gitkeep
+logs/*
+!logs/.gitkeep
+
+# Editors / OS
+.idea/
+.vscode/
+.DS_Store
