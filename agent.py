@@ -223,8 +223,7 @@ class ResearchAgent:
                 )
                 if state.invalid_actions >= MAX_INVALID_ACTIONS:
                     raise WorkflowAbortedError(
-                        "The model repeatedly produced invalid actions "
-                        f". Please try again."
+                        "The model repeatedly produced invalid actions. Please try again."
                     ) from exc
                 feedback = str(exc)
                 continue
