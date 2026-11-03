@@ -509,7 +509,7 @@ class ResearchAgent:
             return ""
         blocks = [
             f"[{index}] Title: {self._clean(item.title)}\n"
-            f"    URL: {item.url}\n"
+            f"    URL: {self._clean(item.url)}\n"
             f"    Snippet: {self._clean(item.snippet)}"
             for index, item in enumerate(results, start=1)
         ]
