@@ -119,7 +119,7 @@ def test_empty_search_query_is_never_executed(build_agent):
 
     assert response.status == "failed"
     assert tool.requests == []
-    assert "query is empty" in response.error
+    assert response.error == "The model repeatedly produced invalid actions. Please try again."
 
 
 def test_overlong_search_query_is_rejected(build_agent):
@@ -132,7 +132,7 @@ def test_overlong_search_query_is_rejected(build_agent):
 
     assert response.status == "failed"
     assert tool.requests == []
-    assert "too long" in response.error
+    assert response.error == "The model repeatedly produced invalid actions. Please try again."
 
 
 def test_duplicate_query_counts_as_invalid_action(build_agent):
@@ -332,7 +332,7 @@ def test_provider_timeout_during_decision_returns_controlled_failure(build_agent
     response = agent.run(QUESTION, CID)
 
     assert response.status == "failed"
-    assert "timed out" in response.error
+    assert response.error == "The AI service could not complete the request. Please try again later."
     assert len(provider.calls) == 1  # no automatic retry
     assert memory.get_records(CID) == []
 
@@ -345,7 +345,7 @@ def test_provider_rate_limit_during_answer_returns_controlled_failure(build_agen
     response = agent.run("hello", CID)
 
     assert response.status == "failed"
-    assert "rate limit" in response.error
+    assert response.error == "The AI service could not complete the request. Please try again later."
 
 
 # --- 14. search provider failure ----------------------------------------------
