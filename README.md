@@ -1,186 +1,221 @@
 # Mini Research Agent
 
-A small, readable AI agent in Python. It takes a question, **decides** whether it needs the web, **runs a search tool under application control**, writes an answer with an LLM, **checks the answer with deterministic rules**, and remembers the conversation in local JSON files.
+A lightweight, controlled AI research agent built with Python. Given a question, it decides whether web search is needed, invokes registered tools through application-controlled execution, generates an answer with an LLM, validates the output with deterministic checks, and stores conversation history in local JSON files.
 
-It is a portfolio project, deliberately lightweight: no agent frameworks, no vector databases, no Docker, no web UI.
+This project focuses on **agent orchestration, tool governance, bounded execution, output validation, and reliable failure handling** without relying on an agent framework, vector database, Docker, or web UI.
 
-## Problem statement
+## Engineering Goals
 
-Calling an LLM in a loop is not an agent. A useful agent needs *control*:
+An LLM-driven workflow needs more than repeated model calls. The application must retain control over:
 
-- who decides what happens next (the model proposes, the **application** disposes),
-- what the model is allowed to trigger (only registered tools, with validated input),
-- when to stop (explicit limits instead of hoping the model stops),
-- what to do when things go wrong (timeouts, bad output, empty search results),
-- and how to avoid presenting guesses as research.
+- **Decision-making:** the model proposes an action; the application validates and executes it.
+- **Tool permissions:** only explicitly registered tools with validated inputs can run.
+- **Execution boundaries:** iteration, search, query-length, result-count, and timeout limits are enforced.
+- **Failure handling:** provider errors, invalid actions, timeouts, and empty search results produce explicit outcomes.
+- **Research integrity:** the agent must not claim to have searched or cite URLs that were not retrieved.
 
-Mini Research Agent is a compact, tested reference for those ideas.
+Mini Research Agent is a compact, tested implementation of these principles.
 
-## Main features
+## Key Features
 
-- **Genuine decision step.** The model chooses `answer` or `search` as structured JSON; the app validates it before anything runs.
-- **Controlled tool execution.** An explicit `ToolRegistry`; only `web_search` is registered. The model never runs code or commands.
-- **Hard limits.** Max iterations, max searches per question (default 2), max query length, max results, request timeouts, max invalid actions.
-- **Honest about research.** Search results keep their real titles/URLs. The evaluator rejects invented URLs and "I searched the web..." claims when nothing was retrieved.
-- **Limited mode.** Without a search key, the agent still works, says clearly that no research was done, and never pretends otherwise.
-- **Deterministic output evaluation** with at most one repair attempt.
-- **Local JSON conversation memory** with atomic writes and corruption handling.
-- **Structured logging** with secret redaction; question text is not logged.
-- **Provider isolation.** All Gemini-specific code is in one module behind a one-method interface.
-- **Offline test suite** (pytest, fakes only; no keys, no network).
+- **Structured agent decisions:** the model selects `answer` or `search` using structured JSON that is validated by the application.
+- **Controlled tool orchestration:** an explicit `ToolRegistry` executes only registered tools; the model cannot run shell commands or arbitrary code.
+- **Bounded execution:** configurable limits for iterations, searches, query length, result count, request timeouts, and invalid actions.
+- **Research-aware responses:** retrieved titles and URLs are preserved; invented URLs and unsupported claims of web research are rejected.
+- **Limited mode:** the agent remains usable without a Tavily key and clearly states when no external research was performed.
+- **Deterministic output evaluation:** structured checks validate the response, with at most one repair attempt.
+- **Local conversation memory:** JSON-based persistence with atomic writes, corruption handling, and duplicate-record protection.
+- **Security-conscious logging:** structured events, secret redaction, and no question/answer text in normal logs.
+- **Provider isolation:** Gemini-specific integration is separated behind an `LLMProvider` interface.
+- **Offline tests:** pytest suite using fakes; no API keys or network access required.
 
-## Architecture overview
+## Architecture
+
+The CLI wires together the research agent, provider, tool registry, evaluator, and local memory. The model proposes decisions and answers, while the application retains responsibility for validation, tool execution, limits, and persistence.
 
 ```mermaid
 flowchart LR
-    U[User] --> CLI[app.py<br/>CLI]
-    CLI --> A[agent.py<br/>ResearchAgent]
-    A -->|decide / answer prompts| P[providers/<br/>LLMProvider -> Gemini]
-    A -->|validated ToolRequest| R[tools/<br/>ToolRegistry]
-    R --> W[web_search<br/>Tavily]
-    A -->|raw answer| E[evaluator.py<br/>deterministic checks]
-    A <-->|history / records| M[memory.py<br/>JSON files in data/]
+    U[User] --> CLI[app.py / CLI]
+    CLI --> A[agent.py / ResearchAgent]
+    A -->|decide and answer prompts| P[LLMProvider]
+    P --> G[Gemini]
+    A -->|validated ToolRequest| R[ToolRegistry]
+    R --> W[web_search / Tavily]
+    A -->|candidate answer| E[evaluator.py]
+    A <-->|history and records| M[memory.py / JSON]
     A -.->|events| L[logs/agent.log]
-    CFG[config.py<br/>.env settings] --> CLI
+    CFG[config.py / environment] --> CLI
     CFG --> A
 ```
 
+### Module Responsibilities
+
 | Module | Responsibility |
 |---|---|
-| `app.py` | CLI only: input, output, wiring. No agent logic. |
-| `agent.py` | The workflow: decide loop, limits, fallbacks, repair, saving. |
-| `config.py` | Load/validate environment settings; logging setup with secret redaction. |
-| `models.py` | Pydantic models (actions, results, evaluation, memory records, responses). |
-| `errors.py` | Application-level exception hierarchy. |
-| `memory.py` | JSON conversation storage. |
-| `evaluator.py` | Deterministic output checks. |
-| `providers/` | `LLMProvider` interface and the Gemini implementation. |
-| `tools/` | `Tool` interface, `ToolRegistry`, and the Tavily web search tool. |
+| `app.py` | CLI input/output and application wiring |
+| `agent.py` | Decision loop, execution limits, fallbacks, repair, and persistence |
+| `config.py` | Environment loading, validation, and logging configuration |
+| `models.py` | Pydantic models for actions, results, evaluation, memory, and responses |
+| `errors.py` | Application-level exception hierarchy |
+| `memory.py` | Local JSON conversation storage |
+| `evaluator.py` | Deterministic response checks |
+| `providers/` | LLM provider interface and Gemini implementation |
+| `tools/` | Tool interface, registry, and Tavily search integration |
 
-More detail: [`docs/architecture.md`](docs/architecture.md).
+See [docs/architecture.md](docs/architecture.md) for additional design details.
 
-## Workflow
+## Agent Workflow
 
-1. Validate the question and load the most recent history messages.
-2. **If search is available**, run the decide loop. Each iteration the model returns `{"action", "query", "reason"}`:
-   - `answer` -> leave the loop.
-   - `search` -> the app validates the query (non-empty, length-limited, not a repeat), checks the search budget, and runs the tool through the registry.
-   - Anything else is an **invalid action**: the model is told why and may retry; after 2 invalid actions in total the run stops with a controlled error.
-3. **If search is not available** (no key, or `MAX_SEARCH_CALLS=0`), the decide step is skipped and the answer prompt states that no research is possible.
-4. The model writes `{"answer", "source_urls"}`.
-5. The evaluator checks it. On failure, the model gets the concrete reasons and **one** regeneration. Re-evaluate.
-6. The result is `completed`, `partial` (answer plus explicit warnings) or `failed` (no answer shown). Answered runs are saved to memory.
+1. Validate the user's question and load the most recent conversation history.
+2. When search is available, ask the model for a structured decision containing `action`, `query`, and `reason`.
+3. If the action is `search`, validate the query, reject empty, oversized, or repeated queries, check the remaining search budget, and execute the registered tool through `ToolRegistry`.
+4. If the action is `answer`, leave the decision loop and request a structured answer containing `answer` and `source_urls`.
+5. Run deterministic output evaluation. If evaluation fails, provide the concrete issues to the model and allow one regeneration attempt.
+6. Return a `completed`, `partial`, or `failed` result. Answered runs are saved to local conversation memory.
 
-**Stopping conditions:** model says `answer`; search limit reached; a search fails; iteration limit reached; repeated invalid actions; provider error.
+When search is unavailable because the Tavily key is missing or `MAX_SEARCH_CALLS=0`, the decision step is skipped. The answer prompt explicitly states that external research is unavailable.
 
-## Technology stack
+**Stopping conditions** include a model decision to answer, search or iteration limits, search failures, repeated invalid actions, and provider errors.
 
-- Python 3.11+ (the test suite was run on 3.13)
-- [Google Gen AI SDK](https://pypi.org/project/google-genai/) (`google-genai`) for Gemini
-- [Tavily](https://tavily.com/) (`tavily-python`) for web search
-- Pydantic v2, python-dotenv
-- pytest
-- Standard library: `logging`, `json`, `pathlib`, `argparse`
+## Technology Stack
 
-## Project structure
+| Area | Technology |
+|---|---|
+| Language | Python 3.11+ |
+| LLM integration | Google Gen AI SDK (`google-genai`) with Gemini |
+| Web search | Tavily (`tavily-python`) |
+| Data validation | Pydantic v2 |
+| Configuration | python-dotenv |
+| Testing | pytest |
+| Persistence | Standard-library JSON and filesystem APIs |
+| CLI and utilities | argparse, logging, pathlib |
 
-```
-mini-research-agent/
-├── app.py                  # CLI
-├── agent.py                # workflow orchestration
-├── config.py               # settings + logging setup
-├── models.py               # pydantic models
-├── errors.py               # exception hierarchy
-├── memory.py               # JSON conversation memory
-├── evaluator.py            # deterministic output checks
-├── providers/
-│   ├── base.py             # LLMProvider interface
-│   └── gemini_provider.py  # Gemini implementation
-├── tools/
-│   ├── base.py             # Tool interface + ToolRegistry
-│   └── web_search.py       # Tavily search tool
-├── tests/                  # pytest suite (offline)
-├── data/                   # conversation JSON files (git-ignored)
-├── logs/                   # agent.log (git-ignored)
-├── docs/architecture.md
-├── .env.example
-├── requirements.txt
-├── pyproject.toml
-└── LICENSE
-```
+The test suite has also been run on Python 3.13.
 
 ## Prerequisites
 
 - Python 3.11 or newer
-- A Gemini API key (required): <https://aistudio.google.com/apikey>
-- A Tavily API key (optional, enables web search): <https://app.tavily.com/>
+- A Gemini API key (required): [Google AI Studio](https://aistudio.google.com/apikey)
+- A Tavily API key (optional; enables web search): [Tavily](https://app.tavily.com/)
 
 ## Installation
+
+### 1. Clone the repository
 
 ```bash
 git clone https://github.com/reezanikeghbal-design/mini-research-agent.git
 cd mini-research-agent
+```
+
+### 2. Create and activate a virtual environment
+
+```bash
 python -m venv .venv
-source .venv/bin/activate        # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
-cp .env.example .env             # Windows: copy .env.example .env
 ```
 
-## Environment configuration
+**macOS / Linux**
+```bash
+source .venv/bin/activate
+```
 
-Edit `.env`. Blank values use the defaults.
+**Windows PowerShell**
+```powershell
+.venv\\Scripts\\Activate.ps1
+```
 
-| Variable | Default | Meaning |
+### 3. Install dependencies
+
+```bash
+python -m pip install --upgrade pip
+pip install -r requirements.txt
+```
+
+### 4. Configure environment variables
+
+Create a local `.env` file:
+
+**macOS / Linux**
+```bash
+cp .env.example .env
+```
+
+**Windows PowerShell**
+```powershell
+Copy-Item .env.example .env
+```
+
+Edit `.env` and provide your Gemini API key. Add a Tavily API key if you want to enable web search. Never commit `.env` or API credentials.
+
+## Configuration
+
+Blank values use the documented defaults.
+
+| Variable | Default | Description |
 |---|---|---|
-| `GEMINI_API_KEY` | *(required)* | Gemini API key |
-| `TAVILY_API_KEY` | *(none)* | Search key; missing = **limited mode** |
-| `GEMINI_MODEL` | `gemini-3.6-flash` | Model name; check Google's docs for current models |
-| `MAX_AGENT_ITERATIONS` | `5` | Decide-loop iterations per question (1-20) |
-| `MAX_SEARCH_CALLS` | `2` | Searches per question (0-10; 0 disables search) |
-| `MAX_SEARCH_RESULTS` | `5` | Results passed to the model per search (1-10) |
-| `MAX_HISTORY_MESSAGES` | `6` | History messages sent to the model (0-50) |
-| `MAX_OUTPUT_LENGTH` | `4000` | Max answer characters (200-20000) |
-| `REQUEST_TIMEOUT_SECONDS` | `30` | Timeout for model and search requests (1-300) |
-| `LOG_LEVEL` | `INFO` | `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL` |
-| `DATA_DIR`, `LOG_DIR` | `./data`, `./logs` | Where memory and logs are written |
+| `GEMINI_API_KEY` | Required | Gemini API key |
+| `TAVILY_API_KEY` | None | Search API key; missing key enables limited mode |
+| `GEMINI_MODEL` | `gemini-3.6-flash` | Gemini model identifier; verify model availability with Google's documentation |
+| `MAX_AGENT_ITERATIONS` | `5` | Decision-loop iterations per question (1–20) |
+| `MAX_SEARCH_CALLS` | `2` | Searches per question (0–10); zero disables search |
+| `MAX_SEARCH_RESULTS` | `5` | Maximum results passed to the model per search (1–10) |
+| `MAX_HISTORY_MESSAGES` | `6` | History messages sent to the model (0–50) |
+| `MAX_OUTPUT_LENGTH` | `4000` | Maximum answer length in characters (200–20,000) |
+| `REQUEST_TIMEOUT_SECONDS` | `30` | Model and search request timeout (1–300) |
+| `LOG_LEVEL` | `INFO` | Logging level |
+| `DATA_DIR`, `LOG_DIR` | `./data`, `./logs` | Directories for conversation data and logs |
 
-Invalid values are all reported together at startup. `.env` is git-ignored; never commit it.
+Invalid configuration values are reported together at startup.
 
-### Limited mode
+### Limited Mode
 
-If `TAVILY_API_KEY` is missing (or `MAX_SEARCH_CALLS=0`):
+If `TAVILY_API_KEY` is missing or `MAX_SEARCH_CALLS=0`:
 
-- the CLI prints a banner and every response shows `limited mode: yes` plus a note;
-- the model is told that search is unavailable and must answer from general knowledge, with no sources;
-- answers may be outdated or wrong about recent events, and are **not** based on external research;
-- an answer that claims to have searched, or that contains URLs the user did not supply themselves, is rejected by the evaluator.
+- The CLI displays a limited-mode notice and each response indicates that external search was unavailable.
+- The model is instructed to answer from general knowledge without claiming to have researched the web.
+- Answers may be outdated or incorrect, particularly for recent events, and are not based on external research.
+- The evaluator rejects unsupported claims of web search and URLs not supplied by the user.
 
-## How to run
+## Running the Agent
+
+Start an interactive session:
 
 ```bash
-python app.py                                   # interactive session
+python app.py
+```
+
+Ask a single question:
+
+```bash
 python app.py --ask "What are the pros and cons of AI automation for small businesses?"
-python app.py --conversation <id>               # resume a saved conversation
 ```
 
-Interactive commands: `/new` (new conversation), `/help`, `/exit` (also `exit`, `quit`). The conversation id is printed at start; saved files are `data/<id>.json`.
-
-Exit codes: `0` ok, `1` the answer failed, `2` configuration error.
-
-## How to run tests
+Resume an existing conversation:
 
 ```bash
-pip install -r requirements.txt
-pytest
+python app.py --conversation <id>
 ```
 
-No API keys or network access are needed: the model and the search service are replaced by fakes. The suite covers: answer without search, search + answer, tool execution, invalid and unknown actions, empty/oversized/duplicate queries, search and iteration limits, empty answers, missing citations, memory persistence / corruption / missing files / failed writes, provider timeouts and rate limits, search failures, missing configuration, failed evaluation, successful and failed repair, secret redaction, and CLI behavior.
+Interactive commands:
 
-## Example interaction
+- `/new` — start a new conversation
+- `/help` — show available commands
+- `/exit` — exit the application (also accepts `exit` and `quit`)
 
-Output format of `python app.py --ask "..."` (this sample was produced with scripted fake model/search responses to show the layout; real answers and sources depend on the live APIs):
+The conversation ID is printed at startup. Conversation files are stored as `data/<id>.json`.
 
-```
+Exit codes:
+
+| Code | Meaning |
+|---|---|
+| `0` | Successful run |
+| `1` | Answer failed |
+| `2` | Configuration error |
+
+## Example Interaction
+
+The following is an illustrative output format generated with scripted fake model and search responses. Real answers and sources depend on the configured live APIs.
+
+```text
 Advantages: saves time on repetitive work and reduces errors. Disadvantages: upfront cost, integration effort, and staff training.
 
 Sources:
@@ -190,9 +225,9 @@ Sources:
 [status: completed | searches: 1 | limited mode: no]
 ```
 
-A degraded run is marked explicitly:
+A degraded run is explicitly marked:
 
-```
+```text
 [PARTIAL RESULT] The answer below is incomplete or unverified; see notes.
 
 <answer text>
@@ -203,99 +238,170 @@ Notes:
 [status: partial | searches: 1 | limited mode: no]
 ```
 
-## Example tool-call workflow
+## Tool-Orchestration Example
 
-For the question *"What are the main advantages and disadvantages of AI automation for small businesses?"* the exchanges look like this (illustrative):
+For a question about the advantages and disadvantages of AI automation for small businesses, the interaction follows this pattern:
 
 ```text
-1. App -> model   decide prompt (question + history + searches remaining)
-2. Model -> app   {"action": "search", "query": "advantages disadvantages AI automation small businesses", "reason": "needs current information"}
-3. App            validates: known action, non-empty, <= 200 chars, not a repeat, budget left (0 of 2 used)
-4. App            ToolRegistry.execute(ToolRequest("web_search", query))  -> Tavily
-5. App            normalizes results: title, url, snippet, score; drops unsafe/duplicate URLs; keeps <= MAX_SEARCH_RESULTS
-6. App -> model   decide prompt again, now with <search_results> ... </search_results>
-7. Model -> app   {"action": "answer", "query": "", "reason": "enough information"}
-8. App -> model   answer prompt (results wrapped as untrusted data)
-9. Model -> app   {"answer": "...", "source_urls": ["https://..."]}
-10. App           evaluator: well-formed, non-empty, length, sources cited, every URL came from the results
-11. App           save to data/<conversation_id>.json, return the response
+1. App -> model   Send decision prompt with question, history, and remaining search budget
+2. Model -> app   Return structured search action and query
+3. App            Validate action, query length, repetition, and search budget
+4. App            Execute the registered web_search tool through ToolRegistry
+5. App            Normalize results, remove unsafe/duplicate URLs, and enforce result limit
+6. App -> model   Send the next decision prompt with retrieved results as untrusted data
+7. Model -> app   Return answer action when sufficient information is available
+8. App -> model   Request a structured answer with source URLs
+9. Model -> app   Return answer and cited URLs
+10. App           Evaluate structure, length, source presence, and URL provenance
+11. App           Persist the answered run and return its status
 ```
 
-## Error-handling strategy
+The model proposes actions; the application validates and executes them. Search results are treated as untrusted input.
 
-Expected failures have their own exception classes (`errors.py`) and become a clear status, never a crash. Unexpected exceptions are not silenced: the CLI logs them with a traceback and keeps the session alive.
+## Output Evaluation
+
+`OutputEvaluator` runs deterministic checks without making another LLM call. It returns a `passed` flag, a `checks` dictionary, and a list of `issues`.
+
+| Check | What it verifies |
+|---|---|
+| `well_formed` | Valid JSON object containing an `answer` string and a `source_urls` list |
+| `non_empty` | The answer contains text |
+| `within_length_limit` | The answer does not exceed `MAX_OUTPUT_LENGTH` |
+| `no_false_search_claims` | When no results were retrieved, the answer avoids phrases that claim web research was performed |
+| `research_sources_present` | When search results were retrieved, at least one retrieved URL is cited |
+| `urls_from_search_results` | URLs in the answer or `source_urls` come from retrieved results or the user's question |
+
+Sources displayed to the user are built from retrieved search results, not from model-authored source metadata.
+
+> **Evaluation boundary:** these checks validate response structure and source provenance. They do not establish factual correctness or prove that a cited page supports a particular claim. No fact-checking mechanism is implemented.
+
+The false-search-claim check uses heuristic English phrases and is not a comprehensive multilingual detector.
+
+## Memory and Persistence
+
+Conversation history is stored locally, one JSON file per conversation:
+
+```text
+data/<conversation_id>.json
+```
+
+Memory behavior:
+
+- Conversation IDs are UUIDs; user-supplied IDs must match `[A-Za-z0-9_-]{1,64}` to prevent path traversal.
+- Records include the question, final answer, status, UTC timestamp, and limited tool metadata.
+- Only the most recent `MAX_HISTORY_MESSAGES` messages are sent to the model.
+- Each conversation file retains at most 200 records.
+- Writes use a temporary file, `fsync`, and `os.replace` to avoid partially written records.
+- Each run has a unique `record_id`; saving the same record twice does not create duplicates.
+- Failed runs are not saved.
+- Corrupted memory files are moved aside, allowing the conversation to continue with empty history.
+
+**Persistence scope:** this design is suitable for a local, single-user application. It is not a multi-user production database. Files are stored as plain text and there is no file locking or encryption.
+
+## Error Handling
+
+Expected failures use application-specific exception classes in `errors.py` and are converted into explicit statuses or messages.
 
 | Situation | Behavior |
 |---|---|
-| Missing `GEMINI_API_KEY` | Startup error with fix instructions, exit code 2 |
-| Missing `TAVILY_API_KEY` | Limited mode (see above) |
-| Model timeout / rate limit / unavailable / bad credentials | Run fails with a specific message; **no automatic retry**; nothing saved |
-| Malformed or unknown model action | Model is told why and may retry; 2 invalid actions in total -> controlled failure |
-| Empty / oversized / repeated search query | Treated as an invalid action; never executed |
-| Model asks for more searches than allowed | Not executed; answer uses what was gathered; warning shown |
-| Search timeout or service error | **No retry**; answer written without research; status `partial` |
-| Search returns nothing | Model may refine the query (counts toward the limit); otherwise `partial` with a warning |
-| Iteration limit reached | Answer from what was gathered; status `partial` |
-| Answer fails evaluation | One regeneration with the reasons. Still failing: `failed` (answer withheld) for severe checks, `partial` with a loud warning for soft ones |
-| Corrupted memory file | Moved aside as `<id>.json.corrupt-<timestamp>`; conversation continues with empty history |
-| Memory write failure | Answer is still shown, with a warning that it was not saved |
+| Missing `GEMINI_API_KEY` | Startup configuration error; exit code 2 |
+| Missing `TAVILY_API_KEY` | Continue in limited mode |
+| Model timeout, rate limit, unavailable service, or invalid credentials | Run fails with a specific message; no automatic retry and no saved answer |
+| Malformed or unknown model action | Explain the invalid action to the model; stop after two invalid actions |
+| Empty, oversized, or repeated search query | Reject the action; do not execute the tool |
+| Search request exceeds the configured budget | Do not execute another search; continue with gathered information and a warning |
+| Search timeout or service error | No automatic retry; return an answer without research as a partial result |
+| Empty search results | Model may refine the query within the search budget; otherwise return a partial result |
+| Iteration limit reached | Return an answer based on gathered information with partial status |
+| Answer fails evaluation | Allow one regeneration; withhold answers that still fail severe checks |
+| Corrupted memory file | Move it aside and continue with empty history |
+| Memory write failure | Show the answer with a warning that it was not saved |
 
-## Memory design
+Unexpected exceptions are logged with a traceback rather than silently ignored.
 
-- One file per conversation: `data/<conversation_id>.json`. Ids are UUIDs; user-supplied ids must match `[A-Za-z0-9_-]{1,64}` (no path traversal).
-- Each record stores the question, final answer, status, UTC timestamp, and small tool metadata (queries, cited URLs, counts).
-- Only the last `MAX_HISTORY_MESSAGES` messages are sent to the model; at most 200 records are kept per file.
-- Writes are atomic: temp file, `fsync`, then `os.replace`. A failed write leaves the previous file intact.
-- Each run has a unique `record_id`; saving the same record twice is a no-op, so retries cannot create duplicates.
-- Failed runs are not saved.
+## Security Considerations
 
-**This is suitable for a local, single-user demo, not a multi-user production database.** There is no locking or encryption; questions and answers are stored as plain text in `data/`.
+- **Tool execution stays in the application.** The model can request only registered tools; unknown tool names are rejected. Model output cannot invoke a shell, `eval`, or arbitrary file access.
+- **Search results are untrusted.** Results are wrapped in `<search_results>` tags, embedded closing tags are neutralized, and system instructions tell the model not to follow instructions found in retrieved content. This reduces prompt-injection risk but cannot eliminate it.
+- **URL hygiene.** Only HTTP(S) URLs without embedded credentials are retained. The agent does not fetch or open result URLs.
+- **Secret handling.** API keys are loaded from environment variables, excluded from representations and error messages, and redacted by the log formatter, including in tracebacks.
+- **Privacy-conscious logging.** Normal logs record events and sizes rather than question or answer text. Search queries are logged only at DEBUG level.
+- **Input boundaries.** Question length, search query length, result count, history size, and execution time are bounded.
 
-## Evaluation design
+These controls reduce risk but should not be treated as a complete security guarantee, especially when handling untrusted web content or sensitive user data.
 
-`OutputEvaluator` is deterministic (no LLM call) and returns `passed`, a `checks` dictionary and a list of `issues`:
+## Automated Tests
 
-| Check | Meaning |
-|---|---|
-| `well_formed` | Valid JSON object with `answer` (string) and `source_urls` (list of strings) |
-| `non_empty` | The answer has text |
-| `within_length_limit` | At most `MAX_OUTPUT_LENGTH` characters |
-| `no_false_search_claims` | If nothing was retrieved, the answer must not say "I searched...", "based on the search results...", etc. (heuristic, English phrases) |
-| `research_sources_present` | If results were retrieved, at least one retrieved URL is cited |
-| `urls_from_search_results` | Every URL in the answer or `source_urls` appears in the retrieved results (or in the user's own question) |
+Run the test suite:
 
-The sources shown to the user are built from the **retrieved results**, never from model-written text.
+```bash
+pytest
+```
 
-> **Important limitation:** these checks verify structure and honesty about sources. They do **not** verify that the answer is factually correct, or that a cited page actually supports a claim. No fact-checking mechanism is implemented.
+The tests use fake model and search implementations. They require no API keys and no network access.
 
-## Security considerations
+Coverage includes:
 
-- **Search results are untrusted.** They are wrapped in `<search_results>` tags, closing tags inside them are neutralized, and the system instruction says never to follow instructions found there. This reduces prompt-injection risk but cannot eliminate it; the architecture also limits the damage (the model can only trigger a registered search, not run code).
-- **The app executes tools, not the model.** Only registered tools run; unknown names are rejected; there is no shell, `eval`, or file access reachable from model output.
-- **URL hygiene.** Only `http(s)` URLs without embedded credentials are kept; the agent never fetches or opens them.
-- **Secrets.** Keys come from the environment; they are excluded from `repr`, error messages and logs, and the log formatter redacts known secret values (including in tracebacks).
-- **Logs** record events and sizes, not question or answer text (search queries only at `DEBUG`).
-- **Input limits** on question length, query length, result count and history size.
+- Answer-only and search-then-answer workflows
+- Tool execution, invalid actions, and unknown actions
+- Empty, oversized, and duplicate queries
+- Search and iteration limits
+- Empty answers and missing citations
+- Memory persistence, corruption, missing files, and failed writes
+- Provider timeouts, rate limits, and search failures
+- Missing configuration and evaluation failures
+- Successful and unsuccessful repair attempts
+- Secret redaction and CLI behavior
 
-## Known limitations
+The automated suite does not exercise live Gemini or Tavily services. Smoke-test real integrations manually with your own credentials.
 
-- Only Gemini and Tavily are implemented. Other providers need a new `LLMProvider`.
-- Search uses result snippets only; pages are not downloaded or read.
-- Evaluation cannot detect wrong facts or unsupported citations; the "false search claim" check uses English phrases only.
-- No automatic retries or backoff; a rate-limit error simply ends the run with a message.
-- JSON memory has no locking, encryption, or search; it is single-user.
-- No streaming output; the CLI is synchronous.
-- Automated tests use fakes. Real Gemini/Tavily calls are not covered by the test suite and should be smoke-tested manually with your own keys (`python app.py --ask "..."`).
+## Known Limitations
 
-## Future improvements
+- Only Gemini and Tavily integrations are implemented.
+- Search uses result snippets; source pages are not downloaded or read.
+- Evaluation does not detect factual errors or determine whether a source supports a claim.
+- The false-search-claim check relies on English-language heuristic phrases.
+- Provider and search failures do not trigger automatic retries or exponential backoff.
+- JSON memory has no locking, encryption, or conversation search and is intended for single-user use.
+- The CLI is synchronous and does not stream output.
+- Automated tests use fakes; live API behavior requires separate manual testing.
 
-- Retry with exponential backoff for rate limits.
-- A page-reading tool with strict URL and SSRF protections.
-- An LLM-based or retrieval-based grounding check as a second evaluation layer.
-- SQLite memory with locking; conversation listing and export.
-- Additional providers behind the same interface.
-- Streaming output and an optional web interface.
+## Future Improvements
+
+- Add bounded retries with exponential backoff for transient provider and search failures.
+- Introduce a page-reading tool with strict URL validation and SSRF protections.
+- Add a second grounding-evaluation layer using a carefully validated LLM-based or retrieval-based approach.
+- Migrate conversation storage to SQLite with locking, listing, and export.
+- Add further LLM providers behind the existing interface.
+- Support streaming responses and an optional web interface.
+
+## Project Structure
+
+```text
+mini-research-agent/
+├── app.py                  # CLI and application wiring
+├── agent.py                # Agent workflow orchestration
+├── config.py               # Settings and logging configuration
+├── models.py               # Pydantic models
+├── errors.py               # Application exception hierarchy
+├── memory.py               # JSON conversation memory
+├── evaluator.py            # Deterministic output checks
+├── providers/
+│   ├── base.py             # LLMProvider interface
+│   └── gemini_provider.py  # Gemini implementation
+├── tools/
+│   ├── base.py             # Tool interface and ToolRegistry
+│   └── web_search.py       # Tavily search integration
+├── tests/                  # Offline pytest suite
+├── data/                   # Git-ignored conversation files
+├── logs/                   # Git-ignored application logs
+├── docs/architecture.md
+├── .env.example
+├── requirements.txt
+├── pyproject.toml
+└── LICENSE
+```
 
 ## License
 
-MIT. See [LICENSE](LICENSE). Replace `[Your Name]` in the license file with your name.
+MIT. See [LICENSE](LICENSE). Replace the `[Your Name]` placeholder in the license file with the appropriate copyright holder.
