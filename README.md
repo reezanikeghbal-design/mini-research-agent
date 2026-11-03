@@ -306,7 +306,7 @@ Expected failures use application-specific exception classes in `errors.py` and 
 |---|---|
 | Missing `GEMINI_API_KEY` | Startup configuration error; exit code 2 |
 | Missing `TAVILY_API_KEY` | Continue in limited mode |
-| Model timeout, rate limit, unavailable service, or invalid credentials | Run fails with a specific message; no automatic retry and no saved answer |
+| Model timeout, rate limit, unavailable service, or invalid credentials | Run fails with a generic provider-error message; technical details are logged locally; no automatic retry and no saved answer |
 | Malformed or unknown model action | Explain the invalid action to the model; stop after two invalid actions |
 | Empty, oversized, or repeated search query | Reject the action; do not execute the tool |
 | Search request exceeds the configured budget | Do not execute another search; continue with gathered information and a warning |
@@ -322,7 +322,7 @@ Unexpected exceptions are logged with a traceback rather than silently ignored.
 ## Security Considerations
 
 - **Tool execution stays in the application.** The model can request only registered tools; unknown tool names are rejected. Model output cannot invoke a shell, `eval`, or arbitrary file access.
-- **Search results are untrusted.** Results are wrapped in `<search_results>` tags, embedded closing tags are neutralized, and system instructions tell the model not to follow instructions found in retrieved content. This reduces prompt-injection risk but cannot eliminate it.
+- **Search results are untrusted.** Retrieved titles, URLs, and snippets are HTML-escaped (`&`, `<`, and `>`) before being added to the prompt. The prompt also explicitly instructs the model not to follow instructions contained in retrieved content. These measures reduce prompt-injection risk but cannot eliminate it.
 - **URL hygiene.** Only HTTP(S) URLs without embedded credentials are retained. The agent does not fetch or open result URLs.
 - **Secret handling.** API keys are loaded from environment variables, excluded from representations and error messages, and redacted by the log formatter, including in tracebacks.
 - **Privacy-conscious logging.** Normal logs record events and sizes rather than question or answer text. Search queries are logged only at DEBUG level.
@@ -404,4 +404,4 @@ mini-research-agent/
 
 ## License
 
-MIT. See [LICENSE](LICENSE). Replace the `[Your Name]` placeholder in the license file with the appropriate copyright holder.
+MIT. See [LICENSE](LICENSE). The copyright holder is identified in the [LICENSE](LICENSE) file.
