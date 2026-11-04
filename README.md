@@ -33,6 +33,22 @@ Mini Research Agent is a compact, tested implementation of these principles.
 
 The CLI wires together the research agent, provider, tool registry, evaluator, and local memory. The model proposes decisions and answers, while the application retains responsibility for validation, tool execution, limits, and persistence.
 
+## Workflow Preview
+
+This project is a command-line agent rather than a web dashboard. The following illustrative terminal-style visuals explain its orchestration and safety boundaries; they are conceptual diagrams, not captured terminal output.
+
+### Agent execution flow
+
+![Illustrative agent execution flow](docs/images/research-agent-flow.svg)
+
+### Controlled tool execution
+
+![Illustrative controlled tool execution](docs/images/research-agent-tools.svg)
+
+### Validated research response
+
+![Illustrative validated research response](docs/images/research-agent-output.svg)
+
 ```mermaid
 flowchart LR
     U[User] --> CLI[app.py / CLI]
