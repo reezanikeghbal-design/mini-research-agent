@@ -35,19 +35,19 @@ The CLI wires together the research agent, provider, tool registry, evaluator, a
 
 ## Workflow Preview
 
-This project is a command-line agent rather than a web dashboard. The following illustrative terminal-style visuals explain its orchestration and safety boundaries; they are conceptual diagrams, not captured terminal output.
+This project is a command-line agent rather than a web dashboard. The views below highlight its orchestration flow, controlled tool execution, and response-validation process.
 
 ### Agent execution flow
 
-![Illustrative agent execution flow](docs/images/research-agent-flow.svg)
+![agent execution flow](docs/images/research-agent-flow.svg)
 
 ### Controlled tool execution
 
-![Illustrative controlled tool execution](docs/images/research-agent-tools.svg)
+![controlled tool execution](docs/images/research-agent-tools.svg)
 
 ### Validated research response
 
-![Illustrative validated research response](docs/images/research-agent-output.svg)
+![validated research response](docs/images/research-agent-output.svg)
 
 ```mermaid
 flowchart LR
